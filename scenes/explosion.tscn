@@ -1,19 +1,29 @@
-[gd_scene load_steps=3 format=3 uid="uid://explosion_002"]
+[gd_scene load_steps=4 format=3 uid="uid://explosion_002"]
 
-[ext_resource type="Script" path="res://scripts/explosion.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/explosion.gd" id="2"]
+
+[sub_resource type="RectangleShape2D" id="1"]
+size = Vector2(64, 64)
 
 [node name="Explosion" type="Area2D"]
-script = ExtResource("1")
+script = ExtResource("2")
 collision_layer = 32
 collision_mask = 1
 
-[node name="TileMapLayer" type="TileMap" parent="Explosion"]
-map_width = 32
-map_height = 32
+[node name="TileMapLayer" type="TileMapLayer" parent="Explosion"]
+map_visible_layers = 1
+map_depth = 16
+layer_0_global_3d_origin = Vector3(0, 0, 0)
+cell_size = Vector2(32, 32)
+frame = 0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Explosion"]
+shape = SubResource("1")
 
 [node name="Timer" type="Timer" parent="Explosion"]
 one_shot = true
+wait_time = 0.5
 
-[node name="Effect" type="Spritesheet" parent="Explosion"]
+[node name="Effect" type="AnimatedSprite2D" parent="Explosion"]
 
 [node name="AnimationPlayer" type="AnimationPlayer" parent="Explosion"]

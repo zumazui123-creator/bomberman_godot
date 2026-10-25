@@ -2,9 +2,12 @@
 
 [node name="Main" type="Node2D"]
 
-[node name="TileMapLayer" type="TileMap" parent="."]
-map_width = 16
-map_height = 16
+[node name="TileMapLayer" type="TileMapLayer" parent="."]
+map_visible_layers = 1
+map_depth = 16
+layer_0_global_3d_origin = Vector3(0, 0, 0)
+cell_size = Vector2(32, 32)
+frame = 0
 
 [node name="PlayerManager" type="Node2D" parent="."]
 
