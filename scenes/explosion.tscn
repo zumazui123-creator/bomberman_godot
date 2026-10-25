@@ -5,8 +5,6 @@
 [sub_resource type="RectangleShape2D" id="1"]
 size = Vector2(64, 64)
 
-[sub_resource type="SpriteFrames" id="2"]
-
 [node name="Explosion" type="Area2D"]
 script = ExtResource("2")
 collision_layer = 32
@@ -26,7 +24,25 @@ shape = SubResource("1")
 one_shot = true
 wait_time = 0.5
 
-[node name="Effect" type="AnimatedSprite2D" parent="Explosion"]
-sprites = SubResource("2")
+[node name="Effect" type="Particles2D" parent="Explosion"]
+opacity = 1
+delta_time = 0.1
+lifetime = 1
+quantity = 20
+remap_opacity_min = 0
+remap_opacity_max = 1
+remap_rotation_min = 0
+remap_rotation_max = 314
+remap_speed_min = 10
+remap_speed_max = 30
+remap_scale_min = 0.1
+remap_scale_max = 0.3
+variable_lifespan = false
+variable_amount = false
+variable_speed = true
+variable_scale = true
+variable_radii = true
+variable_rotation = true
+velocity_var = false
 
 [node name="AnimationPlayer" type="AnimationPlayer" parent="Explosion"]
