@@ -1,0 +1,28 @@
+[gd_scene load_steps=4 format=3 uid="uid://main_scene_789"]
+
+[ext_resource type="Script" path="res://scripts/level_tscn.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
+
+[node name="Main" type="Node2D"]
+ script = ExtResResource(1_script)
+
+[node name="TileMapLayer" type="TileMap2D"]
+
+[node name="TileMap" type="TileMap"]
+ parent = NodePath("TileMapLayer")
+ map_width = 16
+ map_height = 16
+
+[node name="CollisionLayer" type="Node2D"]
+ parent = NodePath("TileMapLayer")
+
+[node name="PlayerManager" type="Node2D"]
+ parent = NodePath("Main")
+
+[node name="Player" type="CharacterBody2D"]
+ script = ExtResResource(2_player)
+ parent = NodePath("PlayerManager")
+
+[node name="LevelManager" type="Node2D"]
+ parent = NodePath("Main")
+ children = ["TileMapLayer", "CollisionLayer", "Player"]

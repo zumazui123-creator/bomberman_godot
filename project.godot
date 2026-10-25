@@ -1,0 +1,39 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; except for manual additions to [user] section.
+;
+; Format:
+;   [section] ; section header
+;   key=value ; define a variable
+;   key="string value" ; define a string variable
+;   key=["list", "of", "values"] ; define a list of values
+;
+; Available sections:
+;   application   ; General application settings
+;   display       ; Display-related settings
+;   rendering     ; Rendering-related settings
+;   input         ; Input-related settings
+;   export        ; Export-related settings
+;   scene         ; Scene-related settings
+;   network       ; Network-related settings
+;   [res://auxillary_configs/xxx.cfg] ; Include files
+
+[application]
+
+config_version=5
+identifier="com.nousresearch.bomberman-godot"
+name="Bomberman Godot"
+main_scene="res://scenes/main.tscn"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[rendering]
+
+[physics]
+
+[input]

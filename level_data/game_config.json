@@ -1,0 +1,25 @@
+{
+    "game_name": "Bomberman Godot",
+    "player_speed": 200.0,
+    "bomb_speed": 400.0,
+    "explosion_radius": 3.0,
+    "max_bombs": 9,
+    "enemies": {
+        "patroller": {
+            "speed": 80.0,
+            "vision_range": 150.0
+        },
+        "tracer": {
+            "speed": 120.0,
+            "vision_range": 200.0
+        }
+    },
+    "powerups": {
+        "health_potion": {
+            "heal_amount": 50
+        },
+        "bomb_upgrade": {
+            "max_bombs": 9
+        }
+    }
+}
