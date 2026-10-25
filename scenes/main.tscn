@@ -17,4 +17,10 @@ map_height = 16
 [node name="Player" type="CharacterBody2D" parent="PlayerManager"]
 script = ExtResource("2")
 
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Player"]
+shape = SubResource("1")
+
 [node name="LevelManager" type="Node2D" parent="."]
+
+[sub_resource type="RectangleShape2D" id="1"]
+size = Vector2(32, 32)
