@@ -1,17 +1,8 @@
-[gd_scene load_steps=4 format=3 uid="uid://player123"]
+[gd_scene load_steps=3 format=3 uid="uid://player_scene_001"]
 
 [ext_resource type="Script" path="res://scripts/player_controller.gd" id="1"]
 
 [node name="BombermanPlayer" type="CharacterBody2D"]
 script = ExtResource("1")
 
-[node name="TileMapLayer" type="TileMap" parent="."]
-tile_set = ExtResource("2")
-
 [node name="CollisionShape2D" type="CollisionShape2D" parent="BombermanPlayer"]
-
-[node name="LaserPointLight" type="PointLight2D" parent="BombermanPlayer"]
-enabled = false
-mode = 0
-
-[node name="Particles" type="Particles2D" parent="BombermanPlayer"]

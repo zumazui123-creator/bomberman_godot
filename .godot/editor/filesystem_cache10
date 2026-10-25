@@ -1,7 +1,6 @@
 78098b89c88a74ebe8c20117b8754620
-::res://::1792947600
+::res://::1792948592
 PROJECT_PATH.md::TextFile::-1::1792940494::0::1::::<><><>0<>0<><>::
-README.md::TextFile::-1::1792939677::0::1::::<><><>0<>0<><>::
 SYNTAX_REPORT.md::TextFile::-1::1792942047::0::1::::<><><>0<>0<><>::
 TODO.md::TextFile::-1::1792869765::0::1::::<><><>0<>0<><>::
 ::res://assets/::1792790482
@@ -12,10 +11,10 @@ game_config.json::JSON::-1::1792939088::0::1::::<><><>0<>0<><>::
 level_0.json::JSON::-1::1792939079::0::1::::<><><>0<>0<><>::
 level_1.json::JSON::-1::1792939584::0::1::::<><><>0<>0<><>::
 level_2.json::JSON::-1::1792939600::0::1::::<><><>0<>0<><>::
-::res://scenes/::1792947639
-explosion.tscn::PackedScene::-1::1792939054::0::1::::<><><>0<>0<><>::res://scripts/explosion.gd
-main.tscn::PackedScene::-1::1792939066::0::1::::<><><>0<>0<><>::res://scripts/level_tscn.gd<>res://scenes/player.tscn
-player.tscn::PackedScene::27365761919714::1792947639::0::1::::<><><>0<>0<><>::res://scripts/player_controller.gd
+::res://scenes/::1792949259
+explosion.tscn::PackedScene::-1::1792949242::0::1::::<><><>0<>0<><>::res://scripts/explosion.gd
+main.tscn::PackedScene::-1::1792949259::0::1::::<><><>0<>0<><>::res://scripts/level_tscn.gd
+player.tscn::PackedScene::-1::1792949228::0::1::::<><><>0<>0<><>::res://scripts/player_controller.gd
 ::res://scripts/::1792947603
 audio_manager.gd::GDScript::3236622936746841352::1792939543::0::1::::AudioManager<>Node2D<><>0<>0<><>::
 bomb.gd::GDScript::7422535752846798302::1792942071::0::1::::BomberBomb<>Area2D<><>0<>0<><>::

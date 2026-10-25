@@ -1,27 +1,19 @@
-[gd_scene load_steps=3 format=3 uid="uid://explosion_scene_456"]
+[gd_scene load_steps=3 format=3 uid="uid://explosion_002"]
 
-[ext_resource type="Script" path="res://scripts/explosion.gd" id="1_script"]
-[sub_resource type="Color" id="explosion_color"]
- asciugamento_color="#f
+[ext_resource type="Script" path="res://scripts/explosion.gd" id="1"]
+
 [node name="Explosion" type="Area2D"]
- script = ExtResResource(1_script)
- collision_layer = 3
- collision_mask = 2
+script = ExtResource("1")
+collision_layer = 32
+collision_mask = 1
 
-[node name="TileMapLayer" type="TileMap2D"]
- map_grid = Vector2i(32, 32)
+[node name="TileMapLayer" type="TileMap" parent="Explosion"]
+map_width = 32
+map_height = 32
 
-[node name="Timer" type="Timer"]
- parent = NodePath("Explosion")
- one_shot = true
+[node name="Timer" type="Timer" parent="Explosion"]
+one_shot = true
 
-[node name="TileMap" type="TileMap"]
- map_width = 16
- map_height = 16
+[node name="Effect" type="Spritesheet" parent="Explosion"]
 
-[node name="Particles" type="SParticles2D"]
- parent = NodePath("Explosion")
- opaque = true
-
-[node name="AnimationPlayer" type="AnimationPlayer"]
- parent = NodePath("Explosion")
+[node name="AnimationPlayer" type="AnimationPlayer" parent="Explosion"]
