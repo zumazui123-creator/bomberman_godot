@@ -1,131 +1,82 @@
-## Explosion Scene Script
-## Creates shockwave with particle effects & tile destruction
-## 💥 PURE FIRE & DESTRUCTION! 🔥
+## Explosion Visual
+## Pure visual effect: plays the Kenney explosion frames along the
+## direction, stretched for the blast length, then fades out.
+## All gameplay logic (tile destruction, damage) lives in the bomb.
 
-extends Area2D
+extends Node2D
 class_name Explosion
 
-var explosion_duration = 0.5
-var tiles_to_destroy = []
-var shockwave_radius = 3.0
-var shockwave_direction = Vector2.DOWN
-var explosion_center = Vector2.ZERO
+const FRAME_DIR := "res://Assets/Explosions/simpleExplosion%02d.png"
+const FRAME_COUNT := 9
+const LIFETIME := 0.45
+const TILE_SIZE := 32.0
 
-# Tile reference - assume TileMapLayer as child
-@onready var tile_map_layer = $TileMapLayer
-const TILE_SIZE = 32.0
+var level_manager: LevelManager = null
 
-# Animation variant for explosion size
-enum ExplosionStage {
-	STAGE1 = 0,  # Initial explosion
-	STAGE2 = 1,  # Max size
-	STAGE3 = 2   # Dissipate
-}
-@onready var animation_player = $AnimationPlayer
+var _origin := Vector2i.ZERO
+var _direction := Vector2i.RIGHT
+var _length := 1
+var _frames: Array[Texture2D] = []
+var _timer := 0.0
+var _sprite: Sprite2D
+
+func setup(p_level_manager: LevelManager, origin: Vector2i, direction: Vector2i, length: int) -> void:
+	level_manager = p_level_manager
+	_origin = origin
+	_direction = direction
+	_length = maxi(length, 1)
 
 func _ready() -> void:
-	@onready var timer = $Timer
-	if timer:
-		timer.wait_time = explosion_duration
-		timer.start()
-	
-	# Start explosion animation
-	if animation_player and animation_player.has_animation("explosion"):
-		animation_player.play("explosion")
+	for i in range(FRAME_COUNT):
+		var path := FRAME_DIR % i
+		if ResourceLoader.exists(path):
+			_frames.append(load(path))
+	_sprite = Sprite2D.new()
+	if _frames.is_empty():
+		_sprite.texture = _make_fallback_texture()
+		_sprite.scale = Vector2.ONE * 0.9
+	else:
+		_sprite.texture = _frames[0]
+		var scale := TILE_SIZE / _frames[0].get_size().x
+		# Stretch along the blast direction (sprite's local X axis).
+		_sprite.scale = Vector2(1.0 + (_length - 1) * 0.85, 1.0) * scale
+	_sprite.rotation = _rotation_for_direction()
+	add_child(_sprite)
+	if level_manager:
+		global_position = level_manager.cell_to_position(_origin + _direction)
+
+func _rotation_for_direction() -> float:
+	match _direction:
+		Vector2i.RIGHT:
+			return 0.0
+		Vector2i.DOWN:
+			return PI / 2.0
+		Vector2i.LEFT:
+			return PI
+		_:
+			return -PI / 2.0
+
+static func _make_fallback_texture() -> Texture2D:
+	var image := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	for y in range(32):
+		for x in range(32):
+			var d := Vector2(x - 15.5, y - 15.5).length()
+			if d < 14.0:
+				image.set_pixel(x, y, Color(1.0, 0.55, 0.1).lerp(Color(1.0, 0.95, 0.4), 1.0 - d / 14.0))
+			else:
+				image.set_pixel(x, y, Color(0.0, 0.0, 0.0, 0.0))
+	return ImageTexture.create_from_image(image)
 
 func _process(delta: float) -> void:
-	# Visual pulsing/shrinking
-	if visible and animation_player:
-		var current_scale = transform.scale
-		if current_scale.x > 0.5:
-			current_scale.x -= delta * 2.0
-			current_scale.y -= delta * 2.0
-			transform.scale = current_scale
-
-func _on_timer_timeout() -> void:
-	# Explosion complete - check for remaining tiles to destroy
-	if not tiles_to_destroy.is_empty():
-		var duration = explosion_duration + 0.2
-		await get_tree().create_timer(duration).timeout
-		_process_remaining_tiles()
-	
-	queue_free()
-
-# Check all tiles within shockwave radius
-func check_collisions(center: Vector2) -> void:
-	explosion_center = center
-	
-	if not tile_map_layer:
-		push_error("Explosion: TileMapLayer not found!")
+	_timer += delta
+	if _timer >= LIFETIME:
+		queue_free()
 		return
-	
-	# Get collision layer mask (adjust for your tilemap layers)
-	var collision_mask = 1
-	
-	# Check all directions
-	for dir in directions():
-		_check_tiles_in_direction(dir, collision_mask)
-
-func directions() -> Array:
-	return [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]
-
-# Check tiles in a specific direction
-func _check_tiles_in_direction(direction: Vector2, collision_mask: int) -> void:
-	var check_position = explosion_center + direction * shockwave_radius * TILE_SIZE
-	
-	# Query for tiles in this direction
-	var result = tile_map_layer.get_used_cells_in_rect(
-		Rect2(check_position.x - TILE_SIZE, check_position.y - TILE_SIZE, TILE_SIZE * 2, TILE_SIZE * 2)
-	)
-	
-	for pos in result:
-		handle_tile(pos, collision_mask)
-
-# Handle a tile that might be destroyed
-func handle_tile(tile_pos: Vector2i, collision_mask: int) -> void:
-	var tile_layer = tile_map_layer.get_layer(0)
-	if not tile_layer:
+	var progress := _timer / LIFETIME
+	if not _sprite:
 		return
-	
-	for cell in tile_layer.get_used_cells():
-		if cell == tile_pos:
-			# Get tile properties
-			var prop_key = tile_layer.get_cell_key(cell)
-			var tile_data = tile_layer.get_cell_value(cell)
-			
-			# Check if tile is destructible
-			if tile_data != 0 and is_destructible(tile_data):
-				var closest_tile = TileMap.cell_to_rect(cell)
-				_destroy_tile(tile_data, closest_tile)
-
-func is_destructible(tile_id: int) -> bool:
-	# Define destructible tile IDs (adjust for your game)
-	return tile_id in [1, 2, 3]  # Wall, Bricks, Wood - add your destructible tiles here
-
-# Mark tile for destruction list
-func destroy_tile(tile_data: int, tile_rect: Rect2) -> void:
-	if tiles_to_destroy.has(tile_data, tile_rect):
-		return
-	
-	tiles_to_destroy.append(tile_data, tile_rect)
-	_destroy_tile(tile_data, tile_rect)
-
-# Actually destroy a tile
-func _destroy_tile(tile_data: int, tile_rect: Rect2) -> void:
-	var count = tiles_to_destroy.erase(tile_data, tile_rect)
-	
-	if count > 0 and tile_map_layer:
-		# Create particle effect
-		if has_node("Particles"):
-			var particles = $Particles.current_particle_count > 0
-			if particles:
-				$Particles.restart()
-		
-		# Update tilemap to break tile
-		var tile_layer = tile_map_layer.get_layer(0)
-		if tile_layer:
-			tile_layer.replace_cell(tile_rect.position.x, tile_rect.position.y, 0)
-
-# REMOVED DUPLICATE _process function - already defined at line 36
-# REMOVED DUPLICATE _on_timer_timeout - already defined at line 45
-# REMOVED DUPLICATE directions(), destroy_tile() - already defined earlier
+	if not _frames.is_empty():
+		var index := int(progress * float(_frames.size()))
+		_sprite.texture = _frames[mini(index, _frames.size() - 1)]
+	# Fade out over the final third.
+	_sprite.modulate.a = 1.0 if progress < 0.6 else (1.0 - (progress - 0.6) / 0.4)

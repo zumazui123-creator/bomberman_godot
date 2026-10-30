@@ -1,82 +1,48 @@
-## Audio Manager
-## Sound effects, music, ambient sounds
-## 🔊 AUDIO SYSTEM! 🎵
+## Audio Manager (Autoload: AudioManager)
+## Music playback + SFX hook. SFX asset paths can be registered at runtime;
+## calls for unknown SFX names are safe no-ops (silent), so the game works
+## even before sound assets are added.
 
-extends Node2D
-class_name AudioManager
+extends Node
 
-# Sound categories
-var bomb_sound := AudioStreamSample.new()
-var explosion_sound := AudioStreamSample.new()
-var player_step_sound := AudioStreamSample.new()
-var enemy_damage_sound := AudioStreamSample.new()
-var powerup_pickup_sound := AudioStreamSample.new()
-var game_over_music := AudioStreamPlayer.new()
-var victory_music := AudioStreamPlayer.new()
-
-# Volume settings
-const PLAYER_VOLUME = 0.5
-const AMBIENT_VOLUME = 0.3
-const EFFECT_VOLUME = 1.0
-const MUSIC_VOLUME = 0.4
+const MUSIC_PATH := "res://Assets/Music/gametrack1.ogg"
+const MUSIC_VOLUME_DB := -8.0
 
 signal sound_played(sound_name: String)
 
+var music_player: AudioStreamPlayer
+var sfx_streams: Dictionary = {}
+
 func _ready() -> void:
-	print("🔊 AudioManager initialized!")
-	# Create temp audio nodes for testing
-	add_audio_node("player_step", "res://assets/audio/step.wav", EFFECT_VOLUME)
-	add_audio_node("explosion", "res://assets/audio/explosion.wav", EFFECT_VOLUME)
-	add_audio_node("powerup", "res://assets/audio/powerup.wav", EFFECT_VOLUME)
-	
-	# Add music
-	add_music_node("game_over")
-	add_music_node("victory")
+	music_player = AudioStreamPlayer.new()
+	music_player.volume_db = MUSIC_VOLUME_DB
+	add_child(music_player)
+	if ResourceLoader.exists(MUSIC_PATH):
+		music_player.stream = load(MUSIC_PATH)
+		music_player.play()
+	else:
+		push_warning("AudioManager: music asset not found at %s" % MUSIC_PATH)
 
-# Add audio sample
-func add_audio_node(name: String, path: String, volume: float = EFFECT_VOLUME) -> void:
-	var player = AudioStreamPlayer.new()
-	player.bus = "SFX"
-	player.volume_db = volume
-	player.stream = AudioStreamSample.new()
+func register_sfx(sound_name: String, stream_path: String) -> void:
+	if ResourceLoader.exists(stream_path):
+		sfx_streams[sound_name] = load(stream_path)
+	else:
+		push_warning("AudioManager: SFX asset not found at %s" % stream_path)
+
+func play_sfx(sound_name: String) -> void:
+	if not sfx_streams.has(sound_name):
+		return
+	var player := AudioStreamPlayer.new()
+	player.stream = sfx_streams[sound_name]
 	add_child(player)
-	
-	# Store reference
-	if not has_symbol("{}".format(name)):
-		set(get_name() + "{}_player".format(name), player)
-		sound_played.emit(name)
+	player.play()
+	sound_played.emit(sound_name)
+	player.finished.connect(player.queue_free)
 
-# Play audio sample
-func play_samples(name: String) -> void:
-	var symbol = get_symbol("{}_player".format(name))
-	if symbol:
-		symbol.play()
+func stop_music() -> void:
+	if music_player:
+		music_player.stop()
 
-# Play explosion sound
-func play_explosion_sound() -> void:
-	sound_played.emit("explosion")
-	# TODO: Add actual sound
-
-# Play powerup sound
-func play_powerup_sound() -> void:
-	sound_played.emit("powerup")
-	# TODO: Add actual sound
-
-# Play player step sound
-func play_player_step_sound() -> void:
-	sound_played.emit("player_step")
-	# TODO: Add actual sound
-
-# Play music
-func play_music(music_name: String) -> void:
-	var symbol = get_symbol("{}_player".format(name))
-	if symbol:
-		symbol.play()
-
-func add_music_node(music_name: String) -> void:
-	var player = AudioStreamPlayer.new()
-	add_child(player)
-
-# Reset audio
-func reset_audio() -> void:
-	pass
+func play_music() -> void:
+	if music_player and music_player.stream:
+		music_player.play()

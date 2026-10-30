@@ -1,120 +1,105 @@
-## UI Manager Script
-## Score, health, timer, game over screen
-## 🎨 UI CONTROLLER! 🎯
+## UI Manager
+## HUD (score / lives / time / level) plus the overlay for pause,
+## game over and victory screens.
 
 extends CanvasLayer
 class_name UIManager
 
-# UI Nodes
-@onready var score_label: Label = $UI/HUD/ScoreLabel
-@onready var lives_label: Label = $UI/HUD/LivesLabel
-@onready var timer_label: Label = $UI/HUD/TimerLabel
-@onready var game_over_panel: ColorRect = $UI/GameOverPanel/ColorRect
-@onready var game_over_label: Label = $UI/GameOverPanel/GameOverLabel
-@onready var restart_button: Button = $UI/GameOverPanel/RestartButton
+const FONT_PATH := "res://Assets/Kenney Bold.ttf"
 
-# References
-@onready var game_state_manager: GameStateManager = $UI/GameStateManager
-
-var is_paused := false
+var score_label: Label
+var lives_label: Label
+var level_label: Label
+var time_label: Label
+var overlay: ColorRect
+var overlay_title: Label
+var overlay_message: Label
 
 func _ready() -> void:
-	# Setup UI nodes
-	setup_labels()
-	setup_buttons()
-	
-	# Start with blank panels
-	hide_game_over()
-	
-	# Connect state changes
-	if game_state_manager:
-		game_state_manager.state_changed.connect(_on_state_changed)
-		game_state_manager.score_changed.connect(_on_score_changed)
-		game_state_manager.lives_changed.connect(_on_lives_changed)
-		game_state_manager.game_ended.connect(_on_game_ended)
+	_build_hud()
+	_build_overlay()
+	GameStateManager.score_changed.connect(_on_score_changed)
+	GameStateManager.lives_changed.connect(_on_lives_changed)
+	GameStateManager.state_changed.connect(_on_state_changed)
+	_update_hud()
 
-# Setup score and health labels
-func setup_labels() -> void:
-	if score_label:
-		score_label.text = "Score: 0"
-	if lives_label:
-		lives_label.text = "Lives: 3"
-	if timer_label:
-		timer_label.text = "Time: 60"
+func _make_label(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	if ResourceLoader.exists(FONT_PATH):
+		label.add_theme_font_override("font", load(FONT_PATH))
+	label.add_theme_font_size_override("font_size", 18)
+	label.modulate = Color(1.0, 1.0, 0.9)
+	label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.6))
+	label.add_theme_constant_override("shadow_offset_x", 2)
+	label.add_theme_constant_override("shadow_offset_y", 2)
+	return label
 
-# Setup restart button
-func setup_buttons() -> void:
-	if restart_button:
-		restart_button.pressed.connect(_on_restart_pressed)
+func _build_hud() -> void:
+	score_label = _make_label("Score: 0")
+	score_label.position = Vector2(16, 12)
+	add_child(score_label)
+	lives_label = _make_label("Lives: 3")
+	lives_label.position = Vector2(200, 12)
+	add_child(lives_label)
+	level_label = _make_label("Level: 1")
+	level_label.position = Vector2(360, 12)
+	add_child(level_label)
+	time_label = _make_label("Time: 120")
+	time_label.position = Vector2(520, 12)
+	add_child(time_label)
 
-# Show game over screen
-func show_game_over(message: String = "GAME OVER") -> void:
-	if game_over_panel:
-		game_over_panel.visible = true
-	if game_over_label:
-		game_over_label.text = message
+func _build_overlay() -> void:
+	overlay = ColorRect.new()
+	overlay.color = Color(0.05, 0.05, 0.1, 0.72)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.hide()
+	add_child(overlay)
+	overlay_title = _make_label("")
+	overlay_title.add_theme_font_size_override("font_size", 42)
+	overlay_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	overlay_message = _make_label("")
+	overlay_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_FULL_RECT)
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(overlay_title)
+	box.add_child(overlay_message)
+	overlay.add_child(box)
 
-# Hide game over screen
-func hide_game_over() -> void:
-	if game_over_panel:
-		game_over_panel.visible = false
-	if restart_button:
-		restart_button.visible = false
+func _update_hud() -> void:
+	score_label.text = "Score: %d" % GameStateManager.score
+	lives_label.text = "Lives: %d" % GameStateManager.lives
+	level_label.text = "Level: %d" % (GameStateManager.level_index + 1)
+	time_label.text = "Time: 120"
 
-func _on_state_changed(state: GameStateManager.GameState) -> void:
+func show_overlay(title: String, message: String) -> void:
+	overlay_title.text = title
+	overlay_message.text = message
+	overlay.show()
+
+func hide_overlay() -> void:
+	overlay.hide()
+
+func update_time(seconds: int) -> void:
+	time_label.text = "Time: %d" % seconds
+
+func update_level(level_number: int) -> void:
+	level_label.text = "Level: %d" % level_number
+
+func _on_score_changed(new_score: int) -> void:
+	score_label.text = "Score: %d" % new_score
+
+func _on_lives_changed(new_lives: int) -> void:
+	lives_label.text = "Lives: %d" % new_lives
+
+func _on_state_changed(state: int) -> void:
 	match state:
-		GameStateManager.GameState.MENU:
-			if game_over_panel:
-				game_over_panel.visible = false
-			if game_over_label:
-				game_over_label.text = "BOMBERMAN"
-			if restart_button:
-				restart_button.visible = true
-
-		GameStateManager.GameState.PLAYING:
-			if game_over_panel:
-				game_over_panel.visible = false
-			if restart_button:
-				restart_button.visible = false
-
+		GameStateManager.GameState.PLAYING, GameStateManager.GameState.MENU:
+			overlay.hide()
 		GameStateManager.GameState.PAUSED:
-			if game_over_panel:
-				game_over_panel.visible = true
-			if game_over_label:
-				game_over_label.text = "PAUSED"
-
+			show_overlay("PAUSED", "Press P to resume")
 		GameStateManager.GameState.GAME_OVER:
-			if game_over_panel:
-				game_over_panel.visible = true
-			if game_over_label:
-				game_over_label.text = "GAME OVER"
-
-			if restart_button:
-				restart_button.visible = true
-
+			show_overlay("GAME OVER", "Score: %d  -  Press Enter to restart" % GameStateManager.score)
 		GameStateManager.GameState.VICTORY:
-			if game_over_panel:
-				game_over_panel.visible = true
-			if game_over_label:
-				game_over_label.text = "VICTORY! 🎉"
-
-func _on_score_changed(score: int) -> void:
-	if score_label:
-		score_label.text = "Score: {}".format(score)
-
-func _on_lives_changed(lives: int) -> void:
-	if lives_label:
-		lives_label.text = "Lives: {}".format(lives)
-
-# Re-enable UI
-func enable_ui() -> void:
-	is_paused = false
-	_hide_game_over_panel()
-
-func _hide_game_over_panel() -> void:
-	if game_over_panel:
-		game_over_panel.visible = false
-
-func _on_restart_pressed() -> void:
-	# Restart game - emit signal to main scene
-	pass
+			show_overlay("VICTORY!", "Score: %d  -  Press Enter to play again" % GameStateManager.score)

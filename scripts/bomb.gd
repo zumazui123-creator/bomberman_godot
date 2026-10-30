@@ -1,132 +1,118 @@
-## Bomb Resource Script
-## N64-style bombs with variable fuse durations
+## Bomb
+## N64-style ground bomb: fuse countdown, four-directional explosion,
+## brick destruction, chain reactions and enemy damage.
 
 extends Area2D
 class_name BomberBomb
 
-# N64 Bomb types
-enum BombType {
-	NORMAL = 0,    # 6 second fuse, base radius
-	MOD3 = 1,      # 7 second fuse, doesn't reset
-	POWER = 2,     # 8 second fuse, larger radius
-}
+const SPRITE_PATH := "res://Assets/Bombs/bomb.png"
+const FUSE_DURATION := 2.5
+const POINTS_PER_BOMB := 10
 
-# Explosion radius in tiles
-const EXPLOSION_RADIUS_TILES = 3.0
+signal exploded
 
-# Scheduled explosions (direction, timer)
-var explosions_to_trigger = []
-var bomb_active_dir = Vector2.DOWN
+var bomb_radius: int = 1
+var owner_player: Node2D = null
+var level_manager: LevelManager = null
+var collision_manager: CollisionManager = null
+var bomb_rules: BombCollisionHandler = null
 
-# Tile reference
-@onready var tile_map = $TileMapLayer
-
-# Helper: Get explosion radius by bomb type
-func _get_explosion_radius(bomb_type: BombType = BombType.NORMAL) -> float:
-	match bomb_type:
-		BombType.NORMAL: return 3.0
-		BombType.MOD3: return 3.5
-		BombType.POWER: return 4.0
-	return 3.0
-
-# N64 Mod 3 behavior (blocks don't reset)
-var mod3_decay_timer = 0.0
-var is_mod3 = false
-
-# Visual effects
-var fuse_duration = 6.0
-var show_fuse_animation = true
+var _fuse_time := FUSE_DURATION
+var _exploded := false
 
 func _ready() -> void:
-	# Initialize bomb visual
-	if $TileMapLayer:
-		# Add bomb sprite or marker here
-		pass
-		# N64-style bomb animation on ground
-		modulate.a = 1.0
-	
-	# Set animation if showing
-	if show_fuse_animation and has_node("AnimationPlayer"):
-		$AnimationPlayer.play("fuse")
+	add_to_group("bombs")
+	monitoring = false  # damage is applied via cell queries, not overlaps
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(26.0, 26.0)
+	var collision := CollisionShape2D.new()
+	collision.shape = shape
+	add_child(collision)
+	var sprite := Sprite2D.new()
+	if ResourceLoader.exists(SPRITE_PATH):
+		sprite.texture = load(SPRITE_PATH)
+	else:
+		sprite.texture = _make_fallback_texture()
+	sprite.scale = Vector2.ONE * 0.2
+	add_child(sprite)
 
-func _physics_process(delta: float) -> void:
-	# Apply gravity and movement
-	velocity.y += 980.0 * delta
-	
-	# Fall movement
-	move_and_slide()
-	
-	# N64 Mod 3 block decay timer
-	if is_mod3 and mod3_decay_timer > 0:
-		mod3_decay_timer -= delta
-	
-	# Check if bomb should snap to ground (prevent falling through)
-	if velocity.y > 0 and $TileMapLayer:
-		# Check if we're at map bottom
-		if position.y > $TileMapLayer.map_size.y * TILE_SIZE - 10:
-			velocity.y = 0
+static func _make_fallback_texture() -> Texture2D:
+	var image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for y in range(16):
+		for x in range(16):
+			var d := Vector2(x - 7.5, y - 8.5).length()
+			if d < 6.0:
+				image.set_pixel(x, y, Color(0.15, 0.15, 0.18))
+			elif d < 7.0:
+				image.set_pixel(x, y, Color(0.9, 0.2, 0.1))
+			else:
+				image.set_pixel(x, y, Color(0.0, 0.0, 0.0, 0.0))
+	return ImageTexture.create_from_image(image)
+
+func setup(
+	p_level_manager: LevelManager,
+	p_collision_manager: CollisionManager,
+	p_bomb_rules: BombCollisionHandler
+) -> void:
+	level_manager = p_level_manager
+	collision_manager = p_collision_manager
+	bomb_rules = p_bomb_rules
 
 func _process(delta: float) -> void:
-	# Fuse timer countdown
-	var now = Time.get_ticks_unix() / 1000.0
-	
-	# Countdown all scheduled explosions
-	for i in range(len(explosions_to_trigger) - 1, -1, -1):
-		var (direction, timer, fuse_duration_val, last_timer) = explosions_to_trigger[i]
-		if now > timer:
-			explosions_to_trigger.remove_at(i)
+	if _exploded:
+		return
+	if not GameStateManager.is_playing():
+		return
+	_fuse_time -= delta
+	# Blink faster during the final second.
+	if _fuse_time < 1.0:
+		modulate.a = 1.0 if fmod(_fuse_time, 0.3) < 0.15 else 0.45
+	if _fuse_time <= 0.0:
+		explode()
 
-# REMOVED DUPLICATE _physics_process - already defined at line 52
-	
-func _on_body_entered(body: Node2D) -> void:
-	if body is CharacterBody2D and not body.is_in_group("wall"):
-		# Player or enemy hit by bomb - deal damage
-		if body.has_method("take_damage"):
-			body.take_damage(1.0)
-		body.queue_free()
+## External trigger used by chain reactions.
+func trigger() -> void:
+	explode()
 
-func _on_timer_timeout() -> void:
-	var now = Time.get_ticks_unix() / 1000.0
-	
-	for i in range(len(explosions_to_trigger) - 1, -1, -1):
-		var (direction, timer, fuse_duration_val, last_timer) = explosions_to_trigger[i]
-		_spawn_explosion_direction(direction, now, fuse_duration_val)
-	
-	# Main timer explosion
-	spawn_explosion(bomb_active_dir, now)
-	
+func explode() -> void:
+	if _exploded:
+		return
+	_exploded = true
+	if level_manager == null or bomb_rules == null:
+		queue_free()
+		return
+	var origin := level_manager.position_to_cell(global_position)
+	for direction in BombCollisionHandler.DIRECTIONS:
+		var affected := bomb_rules.propagate_explosion(origin, direction, bomb_radius)
+		if affected.is_empty():
+			continue
+		_spawn_explosion_visual(origin, direction, affected.size())
+		for cell in affected:
+			_damage_enemies_in_cell(cell)
+			_chain_bombs_in_cell(cell)
+	exploded.emit()
+	GameStateManager.add_score(POINTS_PER_BOMB)
 	queue_free()
 
-func spawn_explosion(direction: Vector2, trigger_time: float, fuse_duration: float = 6.0) -> void:
-	_spawn_explosion_direction(direction, trigger_time, fuse_duration)
+func _spawn_explosion_visual(origin: Vector2i, direction: Vector2i, length: int) -> void:
+	var visual := Explosion.new()
+	visual.setup(level_manager, origin, direction, length)
+	if get_parent():
+		get_parent().add_child(visual)
 
-func _spawn_explosion_direction(direction: Vector2, trigger_time: float, fuse_duration: float = 6.0) -> void:
-	explode(direction, trigger_time, fuse_duration)
+func _damage_enemies_in_cell(cell: Vector2i) -> void:
+	var rect := Rect2(
+		level_manager.cell_to_position(cell) - Vector2(16.0, 16.0),
+		Vector2(32.0, 32.0)
+	)
+	for body in get_tree().get_nodes_in_group("enemies"):
+		if body is Node2D and body.has_method("take_damage") and rect.has_point(body.global_position):
+			body.take_damage(1.0)
 
-# Core explosion function - create explosion effect
-func explode(direction: Vector2, trigger_time: float, fuse_duration: float = 6.0) -> void:
-	# Check if bomb exists (for Mod 3 blocks that can't be destroyed)
-	if $TileMapLayer and not can_destroy_tile(direction):
-		return
-	
-	# Calculate explosion center based on bomb position and direction
-	var bomb_pos = $TileMapLayer.local_to_global(position)
-	var explosion_center = bomb_pos + direction * TILE_SIZE * 2.0
-	
-	# Create explosion scene
-	var explosion_scene = preload("res://scenes/explosion.tscn")
-	if not explosion_scene:
-		push_error("Explosion scene not found!")
-		return
-	
-	var explosion = explosion_scene.instantiate()
-	
-	# Set explosion properties
-	explosion.shockwave_direction = direction
-	explosion.explosion_center = explosion_center
-	explosion.timer.wait_time = fuse_duration
-	explosion.check_collisions(explosion_center)
-	
-	# Add to scene tree
-	call_deferred("queue_free")
-	get_parent().add_child(explosion)
+func _chain_bombs_in_cell(cell: Vector2i) -> void:
+	for other in get_tree().get_nodes_in_group("bombs"):
+		if other == self:
+			continue
+		if other is Node2D and other.has_method("trigger") \
+				and level_manager.position_to_cell(other.global_position) == cell:
+			other.trigger()

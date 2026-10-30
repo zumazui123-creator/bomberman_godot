@@ -1,92 +1,112 @@
-## N64-Style Enemy AI (Patroller type)
-## Simple tracking with collision avoidance
-## 👾 PATROLLING ENEMY AI! 🎯
+## Patroller Enemy
+## Keeps walking straight along a corridor; turns at walls and dead ends.
 
-extends CharacterBody2D
-class_name N64Enemy
+extends Area2D
+class_name PatrollerEnemy
 
-# Enemy statistics
-const MOVEMENT_SPEED = 80.0
-const VISION_RANGE = 150.0
-const DETECTION_ANGLE = 3.14159  # 180 degrees
-const YIELD_SPEED = 3.0
-const HOLD_SPEED = 12.0
-const MAX_SPEED = 40.0
-const INTERVAL_SPEED = 5.0
+const SPRITE_PATH := "res://Assets/Player/Red/player_04.png"
+const TINT := Color(0.7, 0.5, 1.0)
 
-# State tracking
-var is_moving = true
-var is_interacting = false
-var ai_state = "patrolling"
-var current_target = Vector2.ZERO
-var move_vector = Vector2.UP
-var collision_count = 0
-var movement_timer = 0.0
+var hp := 2
+var move_speed := 75.0
 
-# Visual effects
-@onready var laser_pointlight = $LaserPointLight
+var level_manager = null  # LevelManager, set by LevelManager before add_child
+
+var _alive := true
+var _current_cell := Vector2i(-1, -1)
+var _target_cell := Vector2i(-1, -1)
+var _facing := Vector2i.ZERO
+var _moving := false
+var _sprite: Sprite2D
+
+signal died
+
+static func create() -> PatrollerEnemy:
+	var enemy := PatrollerEnemy.new()
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(20.0, 20.0)
+	var collision := CollisionShape2D.new()
+	collision.shape = shape
+	enemy.add_child(collision)
+	var sprite := Sprite2D.new()
+	if ResourceLoader.exists(SPRITE_PATH):
+		sprite.texture = load(SPRITE_PATH)
+	sprite.scale = Vector2.ONE * 0.2
+	sprite.modulate = TINT
+	enemy.add_child(sprite)
+	enemy._sprite = sprite
+	return enemy
 
 func _ready() -> void:
-	add_to_group("enemy")
-	# Set initial movement direction
-	move_vector = Vector2.UP
-	ai_state = "patrolling"
+	add_to_group("enemies")
+	if level_manager:
+		_current_cell = level_manager.position_to_cell(global_position)
+	body_entered.connect(_on_body_entered)
 
 func _physics_process(delta: float) -> void:
-	var player_pos = get_tree().current_scene.get_node_or_null("Player").global_position if get_tree().current_scene else Vector2.ZERO
-	
-	# Look at player
-	var distance = global_position.distance_to(player_pos)
-	if distance < VISION_RANGE and is_instance_valid(current_target):
-		move_vector = normalize(player_pos - global_position)
-	
-	# Get collision layers/map if hard-coded for layer assignment #121
-	if ti_level_layers.tile_map_layer:
-		collision_layer = 2
-		collision_mask = 2
-	
-	# Basic movement
-	velocity = move_vector * MOVEMENT_SPEED
-	
-	# Get tilemap and generate collision shape
-	if move_vector:
-		var pos = global_position + move_vector * 20
-		var test_collision = ti_level_layers.tile_map_layer.map_class.has_solid_at(pos)
-		if test_collision:
-			velocity = Vector2.ZERO
-			movement_timer += delta
-		else:
-			movement_timer = 0.0
-	
-	# Move and slide
-	move_and_slide()
+	if not _alive or level_manager == null:
+		return
+	if not GameStateManager.is_playing():
+		return
+	if not _moving:
+		_choose_next_direction()
+		return
+	var target_pos: Vector2 = level_manager.cell_to_position(_target_cell)
+	var to_target := target_pos - global_position
+	var step := move_speed * delta
+	if to_target.length() <= step:
+		global_position = target_pos
+		_current_cell = _target_cell
+		_moving = false
+	else:
+		global_position += to_target.normalized() * step
 
-# Handle damage - take hit from player
-func take_damage(amount: float) -> void:
-	# Flash white
-	var flash_timer = Timer.new()
-	flash_timer.wait_time = 0.2
-	flash_timer.one_shot = true
-	flash_timer.start()
-	modulate.a = 0.5
-	
-	# Check if player hit enemy
-	player_hit_dealt.emit(Int(0) + global_position, global_position - position)
+func is_alive() -> bool:
+	return _alive
 
-# Start tracking bomb - bomb explodes and enemy moves away
-func start_interview() -> void:
-	ai_state = "fleeing"
-	movement_timer = 2.0
+func _choose_next_direction() -> void:
+	var dir := _pick_direction()
+	if dir == Vector2i.ZERO:
+		return
+	_facing = dir
+	_target_cell = _current_cell + dir
+	_moving = true
 
-# Stop tracking bomb - bomb explodes and enemy moves back to player
-func end_interview() -> void:
-	ai_state = "patrolling"
+## Prefers to keep going straight; otherwise picks a random walkable turn.
+func _pick_direction() -> Vector2i:
+	if _facing != Vector2i.ZERO and level_manager.is_walkable_cell(_current_cell + _facing):
+		return _facing
+	var options: Array[Vector2i] = []
+	for dir in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		if dir == -_facing:
+			continue
+		if level_manager.is_walkable_cell(_current_cell + dir):
+			options.append(dir)
+	if options.is_empty() and _facing != Vector2i.ZERO:
+		return -_facing  # dead end: turn around
+	if options.is_empty():
+		return Vector2i.ZERO
+	return options[randi() % options.size()]
 
-# Handle collision with wall/tile
+func take_damage(amount: float = 1.0) -> void:
+	if not _alive:
+		return
+	hp -= int(amount)
+	if hp <= 0:
+		_die()
+		return
+	modulate.a = 0.55
+	var tween := create_tween()
+	tween.tween_property(self, "modulate", Color.WHITE, 0.25)
+
+func _die() -> void:
+	_alive = false
+	GameStateManager.add_score(100)
+	died.emit()
+	var tween := create_tween()
+	tween.tween_property(self, "scale", Vector2(0.2, 0.2), 0.3)
+	tween.tween_callback(queue_free)
+
 func _on_body_entered(body: Node2D) -> void:
-	if body.is_in_group("wall"):
-		movement_timer += 0.1
-
-# Get collision layers for enemy
-func get_collision_layers() -> Dictionary:
-	return {"collision": 2}
+	if _alive and body.is_in_group("player") and body.has_method("take_damage"):
+		body.take_damage(1.0, self)

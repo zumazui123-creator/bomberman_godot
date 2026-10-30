@@ -1,114 +1,157 @@
-## N64-Style Fast Enemy (Tracer type)
-## Multiple types, different speeds, corner well
-## 🏃‍♂️ FAST ENEMY AI! ⚡
+## Tracer Enemy
+## Fast hunter: chases the player across open rows/columns with clear
+## line of sight, otherwise wanders like a crawler.
 
-extends CharacterBody2D
-class_name FastEnemy
+extends Area2D
+class_name TracerEnemy
 
-# Enemy statistics
-const MOVEMENT_SPEED = 120.0
-const TARGET_SPEED = 16.0
-const SLOW_SPEED = 8.0
-const SLOW_RESISTANCE = 1000.0
-const SLOW_ENERGY = 10000.0
+const SPRITE_PATH := "res://Assets/Player/Red/player_05.png"
+const TINT := Color(1.0, 0.6, 0.3)
+const VISION_RANGE_TILES := 8
 
-# Enemy variants
-const TYPE_SPEED = 90.0
-const TYPE_BIG = 120.0
-const TYPE_FAST = 130.0
-const TYPE_SLOW = 80.0
+var hp := 2
+var move_speed := 95.0
+var chase_speed := 120.0
 
-# Type variants
-var enemy_type = 0  # 0-3 different looks
-var face_direction = Vector2.DOWN
-var flashlight_color = Color(1.0, 1.0, 1.0)
+var level_manager = null  # LevelManager, set by LevelManager before add_child
 
-# State tracking
-var is_moving: bool = true
-var ai_state: String = "patrolling"
-var current_target: Vector2 = Vector2.ZERO
+var _alive := true
+var _current_cell := Vector2i(-1, -1)
+var _target_cell := Vector2i(-1, -1)
+var _facing := Vector2i.ZERO
+var _moving := false
+var _chasing := false
+var _sprite: Sprite2D
 
-# Visual effects
-@onready var laser_pointlight = $LaserPointLight
-@onready var fade_uplight = $PlayerFadeFlash
+signal died
+
+static func create() -> TracerEnemy:
+	var enemy := TracerEnemy.new()
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(20.0, 20.0)
+	var collision := CollisionShape2D.new()
+	collision.shape = shape
+	enemy.add_child(collision)
+	var sprite := Sprite2D.new()
+	if ResourceLoader.exists(SPRITE_PATH):
+		sprite.texture = load(SPRITE_PATH)
+	sprite.scale = Vector2.ONE * 0.2
+	sprite.modulate = TINT
+	enemy.add_child(sprite)
+	enemy._sprite = sprite
+	return enemy
 
 func _ready() -> void:
-	add_to_group("enemy")
-	# Set initial movement direction
-	move_vector = Vector2.UP
-	ai_state = "patrolling"
-	# Set type based on order
-	enemy_type = randi() % 4
+	add_to_group("enemies")
+	if level_manager:
+		_current_cell = level_manager.position_to_cell(global_position)
+	body_entered.connect(_on_body_entered)
 
 func _physics_process(delta: float) -> void:
- 해를 treat 판정
-	var player_pos = get_tree().current_scene.get_node_or_null("Player").global_position if get_tree().current_scene else Vector2.ZERO
-	
-	# Look at player
-	var distance = global_position.distance_to(player_pos)
-	if distance < 300.0 and player_pos.distance_to(current_target):
-		move_vector = _reference_to_player(player_pos - global_position)
+	if not _alive or level_manager == null:
+		return
+	if not GameStateManager.is_playing():
+		return
+	if not _moving:
+		_choose_next_direction()
+		return
+	var speed := chase_speed if _chasing else move_speed
+	var target_pos: Vector2 = level_manager.cell_to_position(_target_cell)
+	var to_target := target_pos - global_position
+	var step := speed * delta
+	if to_target.length() <= step:
+		global_position = target_pos
+		_current_cell = _target_cell
+		_moving = false
+		_chasing = false
 	else:
-		move_vector = normalize(current_target - global_position)
-	
-	# Get collision layers/map if hard-coded for layer assignment #121
-	if ti_level_layers.tile_map_layer:
-		collision_layer = 2
-		collision_mask = 2
-	
-	if not ti_level_layers.tile_map_layer:
-		collision_layer = 2
-		collision_mask = 2
-	
-	# Basic movement
-	velocity = move_vector * MOVEMENT_SPEED
-	
-	# Get tilemap and generate collision shape
-	if move_vector:
-		var pos = global_position + move_vector * 20
-		if ti_level_layers.tile_map_layer.map_class.has_solid_at(pos):
-			push_error("Hit solid tile")
-			velocity = Vector2.ZERO
-	
-	# Move and slide
-	move_and_slide()
+		global_position += to_target.normalized() * step
 
-func _reference_direction(player_target: Vector2) -> Vector2:
-	var angle = angle_to(player_target)
-	velocity.x = sin(angle) * MOVEMENT_SPEED
-	velocity.y = -cos(angle) * MOVEMENT_SPEED
-	return velocity
+func is_alive() -> bool:
+	return _alive
 
-func _get_target() -> Vector2:
-	# Get enemy position to return
-	var enemy_position = global_position
-	return enemy_position
+func _choose_next_direction() -> void:
+	var dir := _pick_direction()
+	if dir == Vector2i.ZERO:
+		return
+	_facing = dir
+	_target_cell = _current_cell + dir
+	_moving = true
 
-# Handle damage from player
-func take_damage(amount: float) -> void:
-	# Flash white
-	var flash_timer = Timer.new()
-	flash_timer.wait_time = 0.2
-	flash_timer.one_shot = true
-	flash_timer.start()
-	modulate.a = 0.5
+func _pick_direction() -> Vector2i:
+	var chase := _chase_direction()
+	if chase != Vector2i.ZERO:
+		_chasing = true
+		return chase
+	_chasing = false
+	return _pick_random_walkable()
 
-# Handle collision with wall
-func on_die() -> void:
-	# Add death animation
-	if fade_uplight:
-		fade_uplight.light_end_stage = 1.0
-		fade_uplight.light_end_stage = 0.0
-		fade_uplight.light_end_duration = 0.2
+## Returns the direction to step toward the player when there is a clear
+## straight line (same row or column, within vision range).
+func _chase_direction() -> Vector2i:
+	var player := _get_player()
+	if player == null:
+		return Vector2i.ZERO
+	var delta: Vector2i = level_manager.position_to_cell(player.global_position) - _current_cell
+	if absi(delta.x) + absi(delta.y) > VISION_RANGE_TILES:
+		return Vector2i.ZERO
+	if delta.x == 0 and delta.y != 0:
+		var dir := Vector2i.DOWN if delta.y > 0 else Vector2i.UP
+		if _path_clear(dir, absi(delta.y)):
+			return dir
+	elif delta.y == 0 and delta.x != 0:
+		var dir := Vector2i.RIGHT if delta.x > 0 else Vector2i.LEFT
+		if _path_clear(dir, absi(delta.x)):
+			return dir
+	return Vector2i.ZERO
 
-# Get collision layers for enemy
-func get_collision_layers() -> Dictionary:
-	return {"collision": 2}
+func _path_clear(direction: Vector2i, distance: int) -> bool:
+	var cell := _current_cell
+	for i in range(distance):
+		cell += direction
+		if level_manager.is_solid_cell(cell):
+			return false
+	return true
 
-# Get render target color
-func render_target() -> Color:
-	return Color.RED
+func _pick_random_walkable() -> Vector2i:
+	var options: Array[Vector2i] = []
+	for dir in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		if level_manager.is_walkable_cell(_current_cell + dir):
+			options.append(dir)
+	if options.is_empty():
+		return Vector2i.ZERO
+	if options.size() > 1 and _facing != Vector2i.ZERO:
+		var without_reverse: Array[Vector2i] = []
+		for dir in options:
+			if dir != -_facing:
+				without_reverse.append(dir)
+		if not without_reverse.is_empty():
+			options = without_reverse
+	return options[randi() % options.size()]
 
-# Get base score for enemy
-func get_base_score() -> int:
-	return int(100 * (enemy_type + 1))
+func _get_player() -> Node2D:
+	var players := get_tree().get_nodes_in_group("player")
+	return players[0] if not players.is_empty() else null
+
+func take_damage(amount: float = 1.0) -> void:
+	if not _alive:
+		return
+	hp -= int(amount)
+	if hp <= 0:
+		_die()
+		return
+	modulate.a = 0.55
+	var tween := create_tween()
+	tween.tween_property(self, "modulate", Color.WHITE, 0.25)
+
+func _die() -> void:
+	_alive = false
+	GameStateManager.add_score(100)
+	died.emit()
+	var tween := create_tween()
+	tween.tween_property(self, "scale", Vector2(0.2, 0.2), 0.3)
+	tween.tween_callback(queue_free)
+
+func _on_body_entered(body: Node2D) -> void:
+	if _alive and body.is_in_group("player") and body.has_method("take_damage"):
+		body.take_damage(1.0, self)

@@ -1,75 +1,112 @@
-## Crawler Enemy Script
-## Slow-moving enemy with tight cornering
-## 🐛 CRAWLER ENEMY! 🐌
+## Crawler Enemy
+## Slow wanderer: random walkable direction, avoids backtracking.
 
-extends CharacterBody2D
+extends Area2D
 class_name CrawlerEnemy
 
-const MOVEMENT_SPEED = 50.0
-const SLOW_SPEED = 25.0
-const SLOW_RESISTANCE = 1000.0
-const SLOW_ENERGY = 10000.0
+const SPRITE_PATH := "res://Assets/Player/Red/player_03.png"
+const TINT := Color(0.45, 1.0, 0.5)
 
-var enemy_type = 0
-var face_direction = Vector2.DOWN
-var flashlight_color = Color(1.0, 1.0, 1.0)
-var is_moving = true
-var ai_state = "patrolling"
-var current_target = Vector2.ZERO
-var move_vector = Vector2.UP
-var collision_count = 0.0
-var movement_timer = 0.0
+var hp := 2
+var move_speed := 55.0
 
-@onready var laser_pointlight = $LaserPointLight
+var level_manager = null  # LevelManager, set by LevelManager before add_child
+
+var _alive := true
+var _current_cell := Vector2i(-1, -1)
+var _target_cell := Vector2i(-1, -1)
+var _facing := Vector2i.ZERO
+var _moving := false
+var _sprite: Sprite2D
+
+signal died
+
+static func create() -> CrawlerEnemy:
+	var enemy := CrawlerEnemy.new()
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(20.0, 20.0)
+	var collision := CollisionShape2D.new()
+	collision.shape = shape
+	enemy.add_child(collision)
+	var sprite := Sprite2D.new()
+	if ResourceLoader.exists(SPRITE_PATH):
+		sprite.texture = load(SPRITE_PATH)
+	sprite.scale = Vector2.ONE * 0.2
+	sprite.modulate = TINT
+	enemy.add_child(sprite)
+	enemy._sprite = sprite
+	return enemy
 
 func _ready() -> void:
-	add_to_group("enemy")
-	move_vector = Vector2.UP
-	ai_state = "patrolling"
-	enemy_type = randi() % 4
+	add_to_group("enemies")
+	if level_manager:
+		_current_cell = level_manager.position_to_cell(global_position)
+	body_entered.connect(_on_body_entered)
 
 func _physics_process(delta: float) -> void:
-	var player_pos = get_tree().current_scene.get_node_or_null("Player").global_position if get_tree().current_scene else Vector2.ZERO
-	
-	var distance = global_position.distance_to(player_pos)
-	if distance < 300.0 and player_pos.distance_to(current_target):
-		move_vector = normalize(player_pos - global_position)
+	if not _alive or level_manager == null:
+		return
+	if not GameStateManager.is_playing():
+		return
+	if not _moving:
+		_choose_next_direction()
+		return
+	var target_pos: Vector2 = level_manager.cell_to_position(_target_cell)
+	var to_target := target_pos - global_position
+	var step := move_speed * delta
+	if to_target.length() <= step:
+		global_position = target_pos
+		_current_cell = _target_cell
+		_moving = false
 	else:
-		move_vector = normalize(current_target - global_position)
-	
-	collision_layer = 2
-	collision_mask = 2
-	
-	velocity = move_vector * MOVEMENT_SPEED
-	
-	if move_vector:
-		var pos = global_position + move_vector * 20
-		if ti_level_layers.tile_map_layer.map_class.has_solid_at(pos):
-			velocity = Vector2.ZERO
-	
-	move_and_slide()
+		global_position += to_target.normalized() * step
 
-func take_damage(amount: float) -> void:
-	var flash_timer = Timer.new()
-	flash_timer.wait_time = 0.2
-	flash_timer.one_shot = true
-	flash_timer.start()
-	modulate.a = 0.5
+func is_alive() -> bool:
+	return _alive
 
-func on_die() -> void:
-	if fade_uplight:
-		fade_uplight.light_end_stage = 1.0
-		fade_uplight.light_end_stage = 0.0
-		fade_uplight.light_end_duration = 0.2
+func _choose_next_direction() -> void:
+	var dir := _pick_direction()
+	if dir == Vector2i.ZERO:
+		return
+	_facing = dir
+	_target_cell = _current_cell + dir
+	_moving = true
 
-func get_collision_layers() -> Dictionary:
-	return {"collision": 2}
+func _pick_direction() -> Vector2i:
+	var options: Array[Vector2i] = []
+	for dir in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		if level_manager.is_walkable_cell(_current_cell + dir):
+			options.append(dir)
+	if options.is_empty():
+		return Vector2i.ZERO
+	if options.size() > 1 and _facing != Vector2i.ZERO:
+		var without_reverse: Array[Vector2i] = []
+		for dir in options:
+			if dir != -_facing:
+				without_reverse.append(dir)
+		if not without_reverse.is_empty():
+			options = without_reverse
+	return options[randi() % options.size()]
 
-func render_target() -> Color:
-	return Color.BLUE
+func take_damage(amount: float = 1.0) -> void:
+	if not _alive:
+		return
+	hp -= int(amount)
+	if hp <= 0:
+		_die()
+		return
+	modulate.a = 0.55
+	var tween := create_tween()
+	tween.tween_property(self, "modulate", Color.WHITE, 0.25)
 
-func get_base_score() -> int:
-	return int(50 * (enemy_type + 1))
+func _die() -> void:
+	_alive = false
+	GameStateManager.add_score(100)
+	died.emit()
+	var tween := create_tween()
+	tween.tween_property(self, "scale", Vector2(0.2, 0.2), 0.3)
+	tween.tween_callback(queue_free)
 
-func get_move_vector() -> Vector2:
-	return move_vector
+func _on_body_entered(body: Node2D) -> void:
+	if _alive and body.is_in_group("player") and body.has_method("take_damage"):
+		body.take_damage(1.0, self)

@@ -1,0 +1,250 @@
+## Level Manager
+## Loads level JSON from res://level_data/, builds the tile map with a
+## procedural tile set (floor / wall / brick), spawns enemies and exposes
+## the tile queries used by the collision manager and entities.
+
+class_name LevelManager
+extends Node2D
+
+const TILE_SIZE := 32
+
+# Atlas coordinates inside the procedural tile set.
+const ATLAS_FLOOR := Vector2i(0, 0)
+const ATLAS_WALL := Vector2i(1, 0)
+const ATLAS_BRICK := Vector2i(2, 0)
+const ATLAS_FLOOR_ALT := Vector2i(3, 0)
+
+signal level_loaded(level_index: int)
+
+var current_level_index: int = 0
+var map_width: int = 0
+var map_height: int = 0
+var player_spawn_point := Vector2(64.0, 64.0)
+
+var tile_map_layer: TileMapLayer
+var _enemy_nodes: Array[CharacterBody2D] = []
+
+func _ready() -> void:
+	tile_map_layer = TileMapLayer.new()
+	tile_map_layer.name = "TileMapLayer"
+	tile_map_layer.tile_set = _build_tileset()
+	add_child(tile_map_layer)
+
+# ---------------------------------------------------------------------------
+# Tile set (procedural, desert style - no external art dependency)
+# ---------------------------------------------------------------------------
+
+func _build_tileset() -> TileSet:
+	var tile_set := TileSet.new()
+	tile_set.tile_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	var image := Image.create(TILE_SIZE * 4, TILE_SIZE, false, Image.FORMAT_RGBA8)
+	_paint_tiles(image)
+	var source := TileSetAtlasSource.new()
+	source.texture = ImageTexture.create_from_image(image)
+	source.texture_region_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	tile_set.add_source(source, 0)
+	var wall_polygon := PackedVector2Array([
+		Vector2.ZERO,
+		Vector2(TILE_SIZE, 0.0),
+		Vector2(TILE_SIZE, TILE_SIZE),
+		Vector2(0.0, TILE_SIZE),
+	])
+	for atlas in [ATLAS_WALL, ATLAS_BRICK]:
+		source.create_tile(atlas)
+		var tile_data: TileData = source.get_tile_data(atlas)
+		var polygon := CollisionPolygon2D.new()
+		polygon.polygon = wall_polygon
+		tile_data.add_collision_polygon(polygon)
+	return tile_set
+
+func _paint_tiles(image: Image) -> void:
+	# Tile 0: sand floor with subtle noise.
+	for y in range(TILE_SIZE):
+		for x in range(TILE_SIZE):
+			var v := 1.0 + float(hash(Vector2i(x, y)) % 7) / 260.0
+			image.set_pixel(x, y, Color(0.85 * v, 0.74 * v, 0.52 * v))
+	# Tile 1: stone wall with a darker rim.
+	for y in range(TILE_SIZE):
+		for x in range(TILE_SIZE):
+			var rim := x < 2 or x > TILE_SIZE - 3 or y < 2 or y > TILE_SIZE - 3
+			image.set_pixel(
+				TILE_SIZE + x, y,
+				Color(0.34, 0.32, 0.30) if rim else Color(0.52, 0.48, 0.43)
+			)
+	# Tile 2: destructible brick with mortar lines.
+	for y in range(TILE_SIZE):
+		for x in range(TILE_SIZE):
+			var row_offset := (y / 8 % 2) * 8
+			var mortar := (y % 8 == 7) or ((x + row_offset) % 16 == 15)
+			image.set_pixel(
+				TILE_SIZE * 2 + x, y,
+				Color(0.42, 0.15, 0.09) if mortar else Color(0.75, 0.36, 0.18)
+			)
+	# Tile 3: floor variant (slightly darker).
+	for y in range(TILE_SIZE):
+		for x in range(TILE_SIZE):
+			var v := 1.0 + float(hash(Vector2i(y, x)) % 5) / 320.0
+			image.set_pixel(TILE_SIZE * 3 + x, y, Color(0.78 * v, 0.66 * v, 0.45 * v))
+
+# ---------------------------------------------------------------------------
+# Level loading
+# ---------------------------------------------------------------------------
+
+func load_level(level_index: int) -> void:
+	current_level_index = level_index
+	var data := _load_level_json(level_index)
+	if data.is_empty():
+		push_error("LevelManager: failed to load level %d" % level_index)
+		return
+	map_width = int(data.get("map_width", 20))
+	map_height = int(data.get("map_height", 20))
+	var spawn: Dictionary = data.get("player_spawn_point", {})
+	player_spawn_point = cell_to_position(
+		Vector2i(int(spawn.get("x", 1)), int(spawn.get("y", 1)))
+	)
+	_free_enemies()
+	_rebuild_tiles(data)
+	_spawn_enemies(data)
+	level_loaded.emit(current_level_index)
+
+func has_next_level() -> bool:
+	return ResourceLoader.exists(
+		"res://level_data/level_%d.json" % (current_level_index + 1)
+	)
+
+func _rebuild_tiles(data: Dictionary) -> void:
+	tile_map_layer.clear()
+	for y in range(map_height):
+		for x in range(map_width):
+			var variant := ATLAS_FLOOR_ALT if (x + y) % 7 == 0 else ATLAS_FLOOR
+			tile_map_layer.set_cell(0, Vector2i(x, y), 0, variant)
+	for entry in data.get("walls", []):
+		_paint_rect(entry, ATLAS_WALL)
+	for entry in data.get("destructibles", []):
+		_paint_rect(entry, ATLAS_BRICK)
+
+func _paint_rect(entry: Dictionary, atlas: Vector2i) -> void:
+	var x := int(entry.get("x", 0))
+	var y := int(entry.get("y", 0))
+	var size: Dictionary = entry.get("size", {})
+	var sx := int(size.get("x", 1))
+	var sy := int(size.get("y", 1))
+	for dy in range(sy):
+		for dx in range(sx):
+			tile_map_layer.set_cell(0, Vector2i(x + dx, y + dy), 0, atlas)
+
+func _spawn_enemies(data: Dictionary) -> void:
+	for entry in data.get("enemies", []):
+		var cell := Vector2i(int(entry.get("x", 1)), int(entry.get("y", 1)))
+		cell = nearest_walkable_cell(cell)
+		var enemy_type := str(entry.get("type", "crawler"))
+		var enemy: CharacterBody2D
+		match enemy_type:
+			"patroller":
+				enemy = PatrollerEnemy.create()
+			"tracer":
+				enemy = TracerEnemy.create()
+			_:
+				enemy = CrawlerEnemy.create()
+		enemy.level_manager = self
+		enemy.position = cell_to_position(cell)
+		add_child(enemy)
+		_enemy_nodes.append(enemy)
+
+func _free_enemies() -> void:
+	for enemy in _enemy_nodes:
+		if is_instance_valid(enemy):
+			enemy.queue_free()
+	_enemy_nodes.clear()
+
+# ---------------------------------------------------------------------------
+# Tile queries
+# ---------------------------------------------------------------------------
+
+func cell_to_position(cell: Vector2i) -> Vector2:
+	return Vector2(cell) * TILE_SIZE + Vector2(TILE_SIZE * 0.5, TILE_SIZE * 0.5)
+
+func position_to_cell(position: Vector2) -> Vector2i:
+	return Vector2i(
+		floorf(position.x / TILE_SIZE),
+		floorf(position.y / TILE_SIZE)
+	)
+
+func is_inside_bounds(cell: Vector2i) -> bool:
+	return cell.x >= 0 and cell.y >= 0 and cell.x < map_width and cell.y < map_height
+
+func get_tile_at(cell: Vector2i) -> TileData:
+	if not is_inside_bounds(cell):
+		return null
+	return tile_map_layer.get_cell_tile_data(0, cell)
+
+## Clears a destructible tile back to plain floor.
+func clear_tile(cell: Vector2i) -> void:
+	if is_inside_bounds(cell):
+		tile_map_layer.set_cell(0, cell, 0, ATLAS_FLOOR)
+
+func is_solid_cell(cell: Vector2i) -> bool:
+	if not is_inside_bounds(cell):
+		return true  # outside the map counts as solid
+	var tile := get_tile_at(cell)
+	return tile != null and tile.get_atlas_coords() == ATLAS_WALL
+
+func is_brick_cell(cell: Vector2i) -> bool:
+	if not is_inside_bounds(cell):
+		return false
+	var tile := get_tile_at(cell)
+	return tile != null and tile.get_atlas_coords() == ATLAS_BRICK
+
+func is_walkable_cell(cell: Vector2i) -> bool:
+	if not is_inside_bounds(cell):
+		return false
+	var tile := get_tile_at(cell)
+	if tile == null:
+		return true
+	var atlas := tile.get_atlas_coords()
+	return atlas == ATLAS_FLOOR or atlas == ATLAS_FLOOR_ALT
+
+## Breadth-first search for the nearest walkable cell (spawn safety).
+func nearest_walkable_cell(cell: Vector2i) -> Vector2i:
+	if is_walkable_cell(cell):
+		return cell
+	var visited := {cell: true}
+	var queue: Array[Vector2i] = [cell]
+	while not queue.is_empty():
+		var current: Vector2i = queue.pop_front()
+		for dir in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			var next_cell := current + dir
+			if visited.has(next_cell):
+				continue
+			visited[next_cell] = true
+			if is_walkable_cell(next_cell):
+				return next_cell
+			queue.append(next_cell)
+	return cell
+
+func get_alive_enemies() -> Array[CharacterBody2D]:
+	var alive: Array[CharacterBody2D] = []
+	for enemy in _enemy_nodes:
+		if is_instance_valid(enemy) and enemy.is_alive():
+			alive.append(enemy)
+	return alive
+
+# ---------------------------------------------------------------------------
+# JSON loading
+# ---------------------------------------------------------------------------
+
+func _load_level_json(level_index: int) -> Dictionary:
+	var path := "res://level_data/level_%d.json" % level_index
+	if not ResourceLoader.exists(path):
+		push_error("LevelManager: %s not found" % path)
+		return {}
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_error("LevelManager: cannot open %s: %s" % [path, error_string(FileAccess.get_open_error())])
+		return {}
+	var parsed: Variant = JSON.parse_string(file.get_as_string())
+	file.close()
+	if not (parsed is Dictionary):
+		push_error("LevelManager: invalid JSON in %s" % path)
+		return {}
+	return parsed

@@ -1,182 +1,186 @@
-## Player Movement Script
-## - Acceleration/friction-based movement 🏃‍♂️
-## - Explosion timer increasing radius 💥
-## - Invincibility frames 🛡️
-## - Multi-direction bomb drops 🧨
-## - Smooth controls with collision handling ⚡
+## Player Controller
+## Grid-based N64-style movement, bomb placement, invincibility frames,
+## damage handling and respawn.
 
 extends CharacterBody2D
 class_name BombermanPlayer
 
-# Movement constants
-const SPEED = 200.0
-const ACCELERATION = 2000.0
-const FRICTION = 1500.0
-const JUMP_VELOCITY = -400.0
+const SPRITE_PATH := "res://Assets/Player/Red/player_03.png"
+const SPRITE_DEAD_PATH := "res://Assets/Player/Red/dead.png"
+const SPRITE_SCALE := 0.22
 
-# Explosion radius (N64 bomb increases with time)
-const EXPLOSION_BASE_RADIUS = 1.5
-const EXPLOSION_MAX_RADIUS = 6.0
-const EXPLOSION_GROWTH_RATE = 0.08
-const EXPLOSION_DURATION = 2.0
+const BOMB_PLACE_COOLDOWN := 0.25
+const RESPAWN_DELAY := 1.2
+const RESPAWN_INVINCIBILITY := 2.0
 
-# Invincibility
-const INVISIBILITY_DURATION = 3.0
-
-# Multi-bomb settings
-const MAX_BOMBS = 9
-const BOMB_FALL_SPEED = 400.0
-const BOMB_DROP_DELAY = 0.1
-
-# Collision constants
-const COL_FLOOR = 1
-const COL_air = 2
-
-# Signal declarations
-signal bomb_dropped(dropped_bomb)
-signal player_hit_dealt damage
+signal bomb_dropped(bomb: BomberBomb)
 signal player_died
 
-# Explosion direction tracking
-var explosion_directions = []
-var last_drop_time = 0.0
-var current_invincible_time = 0.0
-var invincible_timer = Timer.new()
+var level_manager: LevelManager = null
+var collision_manager: CollisionManager = null
+var bomb_rules: BombCollisionHandler = null
+var power_up_manager: PowerUpManager = null
+var world: Node2D = null
 
-# Tilemap reference
-@onready var tile_map_layer = $TileMapLayer
-@onready var laser_pointlight = $LaserPointLight
+var move_speed := 140.0
+var max_bombs := 1
+var bomb_radius := 1
 
-# Debug
-# var show_bomb_paths = true
+var _invincible_time := 0.0
+var _last_bomb_drop := -10.0
+var _dead := false
+var _sprite: Sprite2D
+var _camera: Camera2D
+var _live_texture: Texture2D = null
+
+static func create() -> BombermanPlayer:
+	var player := BombermanPlayer.new()
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(20.0, 20.0)
+	var collision := CollisionShape2D.new()
+	collision.shape = shape
+	player.add_child(collision)
+	var sprite := Sprite2D.new()
+	if ResourceLoader.exists(SPRITE_PATH):
+		sprite.texture = load(SPRITE_PATH)
+		player._live_texture = sprite.texture
+	sprite.scale = Vector2.ONE * SPRITE_SCALE
+	player.add_child(sprite)
+	player._sprite = sprite
+	var camera := Camera2D.new()
+	camera.position = Vector2(0.0, -40.0)
+	camera.zoom = Vector2.ONE * 1.2
+	player.add_child(camera)
+	player._camera = camera
+	return player
+
+func setup(
+	p_level_manager: LevelManager,
+	p_collision_manager: CollisionManager,
+	p_bomb_rules: BombCollisionHandler,
+	p_power_up_manager: PowerUpManager,
+	p_world: Node2D
+) -> void:
+	level_manager = p_level_manager
+	collision_manager = p_collision_manager
+	bomb_rules = p_bomb_rules
+	power_up_manager = p_power_up_manager
+	world = p_world
+	_sync_powerups()
 
 func _ready() -> void:
-	init_timers()
 	add_to_group("player")
-	handle_invincibility_start()
+	_sync_powerups()
 
-# Initialize timers
-func init_timers() -> void:
-	if invincible_timer:
-		invincible_timer.one_shot = true
-		invincible_timer.wait_time = INVISIBILITY_DURATION
-		invincible_timer.connect("timeout", _on_invincibility_timeout)
-		add_child(invincible_timer)
+func _sync_powerups() -> void:
+	if power_up_manager:
+		move_speed = power_up_manager.move_speed
+		max_bombs = power_up_manager.max_bombs
+		bomb_radius = power_up_manager.bomb_radius
 
-func _physics_process(delta: float) -> void:
-	# Apply gravity
-	velocity.y += 9.8 * 60.0 * delta
-
-func _input(event: InputEvent) -> void:
-	if is_instance_valid(get_tree()) and get_tree().current_scene is Node2D:
-		# Movement with acceleration/friction
-		func _move(delta: float) -> void:
-			# Apply acceleration/fraction
-			if Input.is_action_pressed("move_left") or Input.is_action_pressed("move_right"):
-				# Accelerate
-				if velocity.x < SPEED and Input.is_action_pressed("move_right"):
-					velocity.x += ACCELERATION * delta
-					velocity.y = 0
-				elif velocity.x > -SPEED and Input.is_action_pressed("move_left"):
-					velocity.x -= ACCELERATION * delta
-					velocity.y = 0
-			elif velocity.x > 0:
-				velocity.x = max(velocity.x - FRICTION * delta, -SPEED/2)
-			elif velocity.x < 0:
-				velocity.x = min(velocity.x + FRICTION * delta, SPEED/2)
-	
-			# Check if on ground for jumping
-			var on_floor = is_on_floor()
-			if not on_floor:
-				# Can't jump in air
-				velocity.y = 0
-	
-			if velocity.x != 0:
-				# Move with collision
-				move_and_slide()
-			else:
-				# Vertical movement only
-				move_and_slide()
-
-# Drop bomb with acceleration/friction
-# REMOVED DUPLICATE _input function - already defined at line 70
-
-# Drop bomb with acceleration/friction
-func _drop_bomb() -> void:
-	var now = Time.get_ticks_unix() / 1000.0
-	if now - last_drop_time < BOMB_DROP_DELAY:
+func _physics_process(_delta: float) -> void:
+	if _dead or level_manager == null:
 		return
-
-	if explosion_directions.is_empty() or len(explosion_directions) > MAX_BOMBS:
-		explosion_directions.clear()
+	if not GameStateManager.is_playing():
+		velocity = Vector2.ZERO
 		return
-
-	last_drop_time = now
-
-	for direction in explosion_directions:
-		bomb_dropped.emit(direction.copy())
-
-	explosion_directions.clear()
-
-# Check if player can collide at position
-func can_collide(position: Vector2) -> bool:
-	if not tile_map_layer:
-		return true
-	# Check if position is not solid
-	var collision_layer = tile_map_layer.get_used_cells_in_rect(
-		Rect2(position.x - 16, position.y - 16, 32, 32)
+	var input_dir := Vector2(
+		Input.get_axis("move_left", "move_right"),
+		Input.get_axis("move_up", "move_down")
 	)
-	if not collision_layer.is_empty():
-		return false
-	return true
+	if input_dir != Vector2.ZERO:
+		# Axis-locked movement (classic feel), horizontal wins when both pressed.
+		if input_dir.x != 0.0:
+			input_dir = Vector2(signf(input_dir.x), 0.0)
+		else:
+			input_dir = Vector2(0.0, signf(input_dir.y))
+		velocity = input_dir * move_speed
+		move_and_slide()
+	else:
+		velocity = Vector2.ZERO
+		_snap_to_grid()
+	if Input.is_action_just_pressed("drop_bomb"):
+		place_bomb()
 
-# Handle invincibility state
-func handle_invincibility_start() -> void:
-	current_invincible_time = INVISIBILITY_DURATION
-	if laser_pointlight:
-		laser_pointlight.mode = PointLight2D.MODE_DISABLED
-		laser_pointlight.disabled = true
-	if invincible_timer:
-		invincible_timer.start()
+func _snap_to_grid() -> void:
+	var tile := float(level_manager.TILE_SIZE)
+	var nearest := Vector2i(
+		int(roundf(position.x / tile)),
+		int(roundf(position.y / tile))
+	)
+	if level_manager.is_walkable_cell(nearest):
+		position = level_manager.cell_to_position(nearest)
 
-func _on_invincibility_timeout() -> void:
-	# Invincibility ended
-	current_invincible_time = 0.0
-	if laser_pointlight:
-		laser_pointlight.mode = PointLight2D.MODE_DISABLED
-		laser_pointlight.disabled = false
-
-# Take damage and handle collision
-func _on_body_entered(body: Node2D) -> void:
-	if not is_in_group("enemy"):
+## Drops a bomb on the tile the player is standing on.
+func place_bomb() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - _last_bomb_drop < BOMB_PLACE_COOLDOWN:
 		return
-
-	if body.has_method("damage_player"):
-		body.damage_player(1.0, position, direction_to_body(body))
-
-func damage_player(damage: float, hit_position: Vector2 = null, hit_direction: Vector2 = Vector2.ZERO) -> void:
-	if current_invincible_time > 0:
+	var cell := level_manager.position_to_cell(global_position)
+	if not collision_manager.can_place_bomb(cell):
 		return
+	if get_tree().get_nodes_in_group("bombs").size() >= max_bombs:
+		return
+	_last_bomb_drop = now
+	var bomb := BomberBomb.new()
+	bomb.bomb_radius = bomb_radius
+	bomb.owner_player = self
+	if world:
+		world.add_child(bomb)
+	bomb.position = level_manager.cell_to_position(cell)
+	bomb.setup(level_manager, collision_manager, bomb_rules)
+	bomb_dropped.emit(bomb)
 
-	handle_invincibility_start()
-	
-	# Emit damage signal
-	player_hit_dealt.emit(damage, hit_position, hit_direction)
-	
-	# Apply damage effect
-	var laser_power = 1.0
-	get_child(0).lasers.append(Vector2(hit_direction.x, hit_direction.y) * laser_power)
+## Called by enemies (contact) and bombs. `source` lets bombs owned by this
+## player be lenient: your own explosion never kills you.
+func take_damage(_damage: float = 1.0, source: Node2D = null) -> void:
+	if _dead or _invincible_time > 0.0:
+		return
+	if source is BomberBomb and (source as BomberBomb).owner_player == self:
+		return
+	_die()
+
+func _die() -> void:
+	_dead = true
+	velocity = Vector2.ZERO
+	player_died.emit()
+	if _sprite:
+		if ResourceLoader.exists(SPRITE_DEAD_PATH):
+			_sprite.texture = load(SPRITE_DEAD_PATH)
+		visible = false
+	if _camera:
+		_camera.enabled = false
+	var game_ended := GameStateManager.lose_life()
+	if game_ended:
+		return
+	await get_tree().create_timer(RESPAWN_DELAY).timeout
+	if not GameStateManager.is_playing():
+		return
+	_respawn()
+
+func _respawn() -> void:
+	reset()
+	position = level_manager.player_spawn_point
+
+## Public revive: used on level start and game restart.
+func reset() -> void:
+	_dead = false
+	velocity = Vector2.ZERO
+	_invincible_time = RESPAWN_INVINCIBILITY
+	visible = true
+	if _sprite:
+		if _live_texture:
+			_sprite.texture = _live_texture
+	if _camera:
+		_camera.enabled = true
+
+func is_dead() -> bool:
+	return _dead
 
 func _process(delta: float) -> void:
-	# Visual effects
-	if current_invincible_time > 0:
-		# Flash alternating
-		if floor(current_invincible_time) % 2 == 0:
-			modulate.a = 0.5
-		else:
-			modulate.a = 1.0
-	
-	# Laser pointlight tracking
-	if laser_pointlight and not is_on_floor():
-		# Track position
-		laser_pointlight.position = position
+	if _invincible_time <= 0.0:
+		return
+	_invincible_time -= delta
+	modulate.a = 0.5 if fmod(_invincible_time, 0.25) < 0.125 else 1.0
+	if _invincible_time <= 0.0:
+		modulate.a = 1.0

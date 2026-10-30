@@ -1,92 +1,79 @@
-## Energy/Health Script
-## Player health management
-## 💚 ENERGY SYSTEM! ⚡
+## Energy Item / Power-up Drop
+## Spawns from destroyed bricks. Picked up by the player on contact.
+##  - ENERGY: bonus score
+##  - BOMB:   one extra simultaneous bomb
+##  - FIRE:   one extra explosion range
 
-extends CharacterBody2D
-class_name PlayerEnergy
+class_name EnergyItem
+extends Area2D
 
-# Energy settings
-const MAX_HEALTH = 100.0
-const HEAL_AMOUNT = 20.0
-const VIEW_DISTANCE = 150.0
+enum ItemType { ENERGY, BOMB, FIRE }
 
-# Current values
-var health: float = MAX_HEALTH
-var max_health: float = MAX_HEALTH
-var max_energy: float = 100.0
-var energy: float = 100.0
+const SPRITES := {
+	ItemType.ENERGY: "res://Assets/Items/item_random.png",
+	ItemType.BOMB: "res://Assets/Items/item_bomb.png",
+	ItemType.FIRE: "res://Assets/Items/item_nuke.png",
+}
 
-# Visual effects
-var healing_timer := 0.0
-var is_healing := false
+var item_type: ItemType = ItemType.ENERGY
+var power_up_manager: PowerUpManager = null
 
-# Signal declarations
-signal health_changed(new_health: float)
-signal health_low(health: float)
-signal health_full()
+signal picked_up(item_type: ItemType)
+
+static func create(p_type: ItemType) -> EnergyItem:
+	var item := EnergyItem.new()
+	item.item_type = p_type
+	var shape := CircleShape2D.new()
+	shape.radius = 10.0
+	var collision := CollisionShape2D.new()
+	collision.shape = shape
+	item.add_child(collision)
+	var sprite := Sprite2D.new()
+	if ResourceLoader.exists(SPRITES[p_type]):
+		sprite.texture = load(SPRITES[p_type])
+	else:
+		sprite.texture = _make_fallback_texture(p_type)
+	sprite.scale = Vector2.ONE * 0.2
+	item.add_child(sprite)
+	item._sprite_node = sprite
+	return item
+
+static func _make_fallback_texture(p_type: ItemType) -> Texture2D:
+	# Procedural 16x16 colored square if the Kenney item art is missing.
+	var color := Color(1.0, 0.9, 0.3)
+	match p_type:
+		ItemType.BOMB:
+			color = Color(0.3, 0.3, 0.3)
+		ItemType.FIRE:
+			color = Color(1.0, 0.45, 0.1)
+	var image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for y in range(16):
+		for x in range(16):
+			var border := x == 0 or y == 0 or x == 15 or y == 15
+			image.set_pixel(x, y, color.darkened(0.4) if border else color)
+	return ImageTexture.create_from_image(image)
+
+var _sprite_node: Sprite2D = null
 
 func _ready() -> void:
-	# Setup timer
-	var healing_timer = Timer.new()
-	healing_timer.wait_time = 0.016
-	healing_timer.one_shot = true
-	healing_timer.customer = "timeout"
-	healing_timer.connect("timeout", _heal_amount)
-	add_child(healing_timer)
-	
-	# Start healing if damaged
-	if health < max_health:
-		heal_amount()
+	add_to_group("items")
+	body_entered.connect(_on_body_entered)
 
-func _physics_process(delta: float) -> void:
-	# Apply healing continuously
-	heal_amount()
+func _process(_delta: float) -> void:
+	if _sprite_node:
+		_sprite_node.rotation += _delta * 2.0
 
-func _input(event: InputEvent) -> void:
-	# Use energy item if held
-	if event.is_action_pressed("ui_accept"):
-		heal_amount()
-
-# Heal player
-func heal_amount() -> void:
-	if health < max_health:
-		health += HEAL_AMOUNT
-		if health > max_health:
-			health = max_health
-		emit_signal("health_changed", health)
-
-# Full heal
-func heal_full() -> void:
-	health = max_health
-	emit_signal("health_changed", health)
-	emit_signal("health_full")
-
-# Take damage
-func take_damage(amount: float) -> void:
-	if health > 0:
-		health -= amount
-		if health < 0:
-			health = 0
-		emit_signal("health_changed", health)
-		if health <= 30.0:
-			emit_signal("health_low", health)
-
-# Check if player is alive
-func is_alive() -> bool:
-	return health > 0
-
-# Reset energy
-func reset_energy() -> void:
-	health = max_health
-	energy = max_energy
-	emit_signal("health_changed", health)
-
-# Get energy percentage
-func get_energy_percentage() -> float:
-	if max_energy > 0:
-		return health / max_energy
-	return 0.0
-
-# Get max health percentage
-func get_max_energy_percentage() -> float:
-	return max_health / max_health
+func _on_body_entered(body: Node2D) -> void:
+	if not body.is_in_group("player"):
+		return
+	match item_type:
+		ItemType.ENERGY:
+			GameStateManager.add_score(50)
+		ItemType.BOMB:
+			if power_up_manager:
+				power_up_manager.apply_bomb_upgrade()
+		ItemType.FIRE:
+			if power_up_manager:
+				power_up_manager.apply_fire_upgrade()
+	picked_up.emit(item_type)
+	queue_free()

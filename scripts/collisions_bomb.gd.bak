@@ -1,0 +1,37 @@
+## Bomb Collision Handler
+## Placement rules and explosion propagation for bombs.
+## N64-style: the explosion walks one direction and stops at the first solid
+## wall; a destructible brick is destroyed and also stops the wave.
+
+class_name BombCollisionHandler
+extends Node
+
+const DIRECTIONS: Array[Vector2i] = [
+	Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT,
+]
+
+var collisions: CollisionManager = null
+
+func setup(p_collisions: CollisionManager) -> void:
+	collisions = p_collisions
+
+func can_place_at(cell: Vector2i) -> bool:
+	if collisions == null:
+		return false
+	return collisions.can_place_bomb(cell)
+
+## Walks `radius` cells from the bomb origin in one direction.
+## Returns the list of cells affected by the explosion (does NOT include the
+## origin cell itself). Destructible bricks on the path are destroyed.
+func propagate_explosion(origin_cell: Vector2i, direction: Vector2i, radius: int) -> Array[Vector2i]:
+	var affected: Array[Vector2i] = []
+	var cell := origin_cell
+	for i in range(radius):
+		cell += direction
+		if collisions.is_solid(cell):
+			break  # wall stops the wave, the wall itself survives
+		affected.append(cell)
+		if collisions.is_destructible(cell):
+			collisions.destroy_tile(cell)
+			break  # brick is destroyed and absorbs the wave
+	return affected
